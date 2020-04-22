@@ -1,9 +1,9 @@
-resource "aws_instance" "web" {
-  ami           = var.instance_ami
-  instance_type = var.instance_type
-  count         = var.instance_count
-
-  key_name      = var.instance_key_name
+resource "aws_instance" "application" {
+  ami             = var.instance_ami
+  instance_type   = var.instance_type
+  count           = var.instance_count
+  key_name        = var.instance_key_name
+  security_groups = [aws_security_group.application.name]
 
   tags = {
     Name      = "${var.stage}-application"
@@ -11,6 +11,39 @@ resource "aws_instance" "web" {
     stage     = var.stage
   }
 }
+
+resource "aws_security_group" "application" {
+  name        = "${var.stage}-application"
+  description = "Allow inbound traffic"
+
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "HTTP web app"
+    from_port   = 8080
+    to_port     = 8080
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "${var.stage}-application"
+  }
+}
+
+# Redis instance
 
 resource "aws_elasticache_cluster" "example" {
   cluster_id           = "${var.stage}-redis"
@@ -20,9 +53,27 @@ resource "aws_elasticache_cluster" "example" {
   parameter_group_name = "default.redis3.2"
   engine_version       = "3.2.10"
   port                 = 6379
+  security_group_ids   = [aws_security_group.redis.id]
 }
 
-# Create load balancer
+resource "aws_security_group" "redis" {
+  name        = "${var.stage}-redis"
+  description = "Allow inbound traffic"
+
+  ingress {
+    description = "redis for web apps"
+    from_port       = 6379
+    to_port         = 6379
+    protocol        = "tcp"
+    security_groups = [aws_security_group.application.id]
+  }
+
+  tags = {
+    Name = "${var.stage}-application"
+  }
+}
+
+# Load balancer
 resource "aws_elb" "bar" {
   name               = "${var.stage}-elb"
   availability_zones = ["eu-west-3"]
@@ -42,13 +93,13 @@ resource "aws_elb" "bar" {
     interval            = 30
   }
 
-  instances                   = aws_instance.web.*.id
+  instances                   = aws_instance.application.*.id
   cross_zone_load_balancing   = true
   idle_timeout                = 400
   connection_draining         = true
   connection_draining_timeout = 400
 
   tags = {
-    Name = "foobar-terraform-elb"
+    Name = "${var.stage}-elb"
   }
 }
